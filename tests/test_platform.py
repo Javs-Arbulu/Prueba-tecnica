@@ -212,3 +212,35 @@ def test_the_agent_directory_is_not_hidden_behind_pagination(agent_client, super
 
     assert response.data["next"] is None
     assert len(response.data["results"]) == response.data["count"]
+
+
+def test_the_suite_runs_on_the_settings_it_thinks_it_does():
+    """A guard against a silent drift that cost 17x in runtime.
+
+    compose exports DJANGO_SETTINGS_MODULE for the server, and pytest-django
+    gives the environment variable precedence over the ini, so the suite quietly
+    ran on config.settings.local while CI ran on config.settings.test - the fast
+    password hasher, the silenced logging and the throttle rates here were all
+    dead configuration.
+    """
+    from django.conf import settings
+
+    how_to_run = (
+        "Run the suite with `make test` (or `docker compose run --rm web test`) so the "
+        "entrypoint pins the settings; calling pytest directly inside the container "
+        "inherits compose's DJANGO_SETTINGS_MODULE instead."
+    )
+    assert settings.SETTINGS_MODULE == "config.settings.test", how_to_run
+    assert settings.PASSWORD_HASHERS == ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+
+def test_no_environment_answers_html_for_the_api():
+    """Local used to enable DRF's browsable API, so a browser got HTML where
+    production returns JSON. An environment that disagrees with production about
+    the shape of a response hides bugs instead of surfacing them."""
+    import importlib
+
+    for name in ("base", "local", "production", "test"):
+        module = importlib.import_module(f"config.settings.{name}")
+        renderers = module.REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"]
+        assert renderers == ["rest_framework.renderers.JSONRenderer"], name

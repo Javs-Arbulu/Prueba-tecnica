@@ -41,7 +41,14 @@ prepare() {
 case "${1:-runserver}" in
   runserver)
     prepare
-    exec python manage.py runserver 0.0.0.0:8000
+    # With DJANGO_DEBUG=False the development server stops serving static files
+    # and the admin loses its stylesheet. --insecure puts them back, so turning
+    # DEBUG off to match production stays a one-variable decision.
+    if [ "${DJANGO_DEBUG:-True}" = "True" ]; then
+      exec python manage.py runserver 0.0.0.0:8000
+    else
+      exec python manage.py runserver 0.0.0.0:8000 --insecure
+    fi
     ;;
   gunicorn)
     prepare
@@ -54,7 +61,12 @@ case "${1:-runserver}" in
   test)
     wait_for_db
     shift
-    exec pytest "$@"
+    # Pinned here because compose exports DJANGO_SETTINGS_MODULE for the server,
+    # and pytest-django gives the environment variable precedence over the ini.
+    # Without this the suite runs on config.settings.local while CI runs on
+    # config.settings.test, which is the worst kind of difference: the one
+    # nobody sees until a test passes locally and fails in the pipeline.
+    exec env DJANGO_SETTINGS_MODULE=config.settings.test pytest "$@"
     ;;
   *)
     exec "$@"

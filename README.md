@@ -20,6 +20,7 @@ loads a demo dataset and serves the API on <http://localhost:8000>.
 | What | Where |
 |---|---|
 | API index | <http://localhost:8000/api/v1/> — every entry point, no token needed |
+| | *(the API answers JSON everywhere, in every environment — see below)* |
 | Swagger UI | <http://localhost:8000/api/docs/> — 19 operations over 16 routes |
 | ReDoc | <http://localhost:8000/api/redoc/> |
 | OpenAPI schema | <http://localhost:8000/api/schema/> · committed at [`docs/openapi.yaml`](docs/openapi.yaml) |
@@ -512,6 +513,13 @@ What is not tested: that Django saves to the database.
 - **Structured JSON logging**, level configurable per environment.
 - **`/api/v1/health/`** opens a real database connection rather than reporting that the
   process is running.
+- **Development answers exactly what production answers.** DRF's browsable API is
+  not enabled anywhere: it would make local return HTML where production returns
+  JSON, and an environment that disagrees with production about the shape of a
+  response hides bugs instead of surfacing them. The only HTML this project serves
+  is the admin and `/api/docs/`. The one remaining difference is Django's own
+  traceback page, which appears while `DJANGO_DEBUG=True`; set it to `False` in
+  your `.env` and local becomes byte-for-byte production, static files included.
 - **The login endpoint is rate limited** (`auth_token`, 10/min by default): an
   unauthenticated endpoint that checks passwords is the cheapest thing here to attack.
 - **`NUM_PROXIES` defaults to 0, and that matters.** DRF's own default trusts

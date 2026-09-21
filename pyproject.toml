@@ -73,6 +73,7 @@ omit = [
     "config/wsgi.py",
     # Environment-specific settings: exercised by running in that environment,
     # not by asserting that a module of constants contains its constants.
+    "config/settings/local.py",
     "config/settings/production.py",
     "config/settings/test.py",
     "manage.py",
