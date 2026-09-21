@@ -1,0 +1,239 @@
+# Support Request Management API — runnable request collection
+#
+# Works with the REST Client extension for VS Code and with JetBrains HTTP Client.
+# Start the stack first:  docker compose up --build
+#
+# The requests are ordered as a story: a customer reports a problem, a supervisor
+# triages it, an agent works it, and the history is read back.
+
+@host = http://localhost:8000
+@api = {{host}}/api/v1
+
+###############################################################################
+# 1. The customer — no authentication
+###############################################################################
+
+### Open a support request
+# @name publicCreate
+POST {{api}}/public/tickets/
+Content-Type: application/json
+Idempotency-Key: demo-key-0001
+
+{
+  "customer": { "name": "Elena Duarte", "email": "elena.duarte@northwind.example" },
+  "subject": "Cannot log in after the password reset",
+  "description": "I requested a reset yesterday and the link says it has expired. I have tried three times from two browsers.",
+  "reported_priority": "HIGH"
+}
+
+@ticketId = {{publicCreate.response.body.public_id}}
+
+### Send it again — same key, same ticket, 200 instead of 201 (ADR-15)
+POST {{api}}/public/tickets/
+Content-Type: application/json
+Idempotency-Key: demo-key-0001
+
+{
+  "customer": { "name": "Elena Duarte", "email": "elena.duarte@northwind.example" },
+  "subject": "Cannot log in after the password reset",
+  "description": "I requested a reset yesterday and the link says it has expired. I have tried three times from two browsers.",
+  "reported_priority": "HIGH"
+}
+
+### Track it — status and dates only, nothing internal
+GET {{api}}/public/tickets/{{ticketId}}/
+
+###############################################################################
+# 2. Authentication
+###############################################################################
+
+### Sign in as a supervisor
+# @name supervisorLogin
+POST {{api}}/auth/token/
+Content-Type: application/json
+
+{ "email": "supervisor@support.local", "password": "demo12345" }
+
+@supervisorToken = {{supervisorLogin.response.body.access}}
+
+### Sign in as an agent
+# @name agentLogin
+POST {{api}}/auth/token/
+Content-Type: application/json
+
+{ "email": "ana.reyes@support.local", "password": "demo12345" }
+
+@agentToken = {{agentLogin.response.body.access}}
+@agentRefresh = {{agentLogin.response.body.refresh}}
+
+### Who am I
+GET {{api}}/me/
+Authorization: Bearer {{agentToken}}
+
+### Refresh the access token
+POST {{api}}/auth/token/refresh/
+Content-Type: application/json
+
+{ "refresh": "{{agentRefresh}}" }
+
+###############################################################################
+# 3. The queue
+###############################################################################
+
+### Everything, newest first
+GET {{api}}/tickets/
+Authorization: Bearer {{agentToken}}
+
+### The unclaimed queue, most urgent first
+GET {{api}}/tickets/?unassigned=true&ordering=-priority
+Authorization: Bearer {{agentToken}}
+
+### My open work
+GET {{api}}/tickets/?status=OPEN&status=IN_PROGRESS&search=login
+Authorization: Bearer {{agentToken}}
+
+### Ordered by position in the workflow, not alphabetically
+GET {{api}}/tickets/?ordering=status
+Authorization: Bearer {{agentToken}}
+
+### Everything for one customer since a date
+GET {{api}}/tickets/?customer_email=elena.duarte@northwind.example&created_after=2026-01-01T00:00:00Z
+Authorization: Bearer {{agentToken}}
+
+### The agent directory, for the assignment picker
+# @name agents
+GET {{api}}/agents/
+Authorization: Bearer {{supervisorToken}}
+
+@assigneeId = {{agents.response.body.results[1].public_id}}
+
+### Intake by phone — same Idempotency-Key twice returns the same ticket (200)
+POST {{api}}/tickets/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+Idempotency-Key: call-4471
+
+{
+  "customer": { "name": "Tomas Iglesias", "email": "tomas.iglesias@acme.example" },
+  "subject": "Called in: invoices download as empty files",
+  "description": "The customer called; every invoice PDF downloads with zero bytes.",
+  "reported_priority": "URGENT",
+  "priority": "HIGH"
+}
+
+###############################################################################
+# 4. Working a ticket
+###############################################################################
+
+### The detail: note `version` and `allowed_transitions`
+# @name detail
+GET {{api}}/tickets/{{ticketId}}/
+Authorization: Bearer {{agentToken}}
+
+### Triage disagrees with the customer (ADR-09)
+POST {{api}}/tickets/{{ticketId}}/priority/
+Authorization: Bearer {{supervisorToken}}
+Content-Type: application/json
+
+{ "priority": "MEDIUM", "note": "Single user affected; not a platform outage." }
+
+### A supervisor assigns it
+POST {{api}}/tickets/{{ticketId}}/assign/
+Authorization: Bearer {{supervisorToken}}
+Content-Type: application/json
+
+{ "assignee_id": "{{assigneeId}}", "note": "Ana owns the authentication area." }
+
+### ...or the agent simply takes it
+POST {{api}}/tickets/{{ticketId}}/assign-to-me/
+Authorization: Bearer {{agentToken}}
+
+### Start working on it
+POST {{api}}/tickets/{{ticketId}}/status/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "status": "IN_PROGRESS", "note": "Picked up from the queue." }
+
+### Add an internal note
+POST {{api}}/tickets/{{ticketId}}/comments/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "body": "Reproduced on staging. The reset token TTL is 15 minutes, not 24 hours." }
+
+### Ask the customer for something and stop the clock
+POST {{api}}/tickets/{{ticketId}}/status/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "status": "PENDING_CUSTOMER", "note": "Asked for the exact time of the reset request." }
+
+### Resolve it
+POST {{api}}/tickets/{{ticketId}}/status/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "status": "RESOLVED", "note": "Token lifetime corrected and confirmed with the customer." }
+
+### Edit the descriptive fields — audited like everything else
+PATCH {{api}}/tickets/{{ticketId}}/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "subject": "Password reset link expires after 15 minutes" }
+
+###############################################################################
+# 5. History
+###############################################################################
+
+### The unified timeline (ADR-08)
+GET {{api}}/tickets/{{ticketId}}/timeline/
+Authorization: Bearer {{agentToken}}
+
+### Just the comments
+GET {{api}}/tickets/{{ticketId}}/comments/
+Authorization: Bearer {{agentToken}}
+
+###############################################################################
+# 6. The interesting failures
+###############################################################################
+
+### Illegal transition -> 400, and the response says what IS legal
+POST {{api}}/tickets/{{ticketId}}/status/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "status": "PENDING_CUSTOMER", "note": "Not reachable from RESOLVED." }
+
+### Stale If-Match -> 409 version_conflict (ADR-07)
+POST {{api}}/tickets/{{ticketId}}/status/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+If-Match: 1
+
+{ "status": "CLOSED", "note": "Built on a stale form." }
+
+### An agent trying to hand a ticket to somebody else -> 403 (supervisors only)
+POST {{api}}/tickets/{{ticketId}}/assign/
+Authorization: Bearer {{agentToken}}
+Content-Type: application/json
+
+{ "assignee_id": "{{assigneeId}}" }
+
+### Tickets cannot be deleted -> 405 (ADR-13)
+DELETE {{api}}/tickets/{{ticketId}}/
+Authorization: Bearer {{agentToken}}
+
+### No token -> 401 in the standard envelope
+GET {{api}}/tickets/
+
+###############################################################################
+# 7. Operations
+###############################################################################
+
+### Health: process and database
+GET {{api}}/health/
+
+### The OpenAPI schema
+GET {{host}}/api/schema/

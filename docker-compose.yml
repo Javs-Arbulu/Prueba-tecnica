@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-support}
+      POSTGRES_USER: ${POSTGRES_USER:-support}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-support}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-support} -d ${POSTGRES_DB:-support}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "true"
+    command: runserver
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.local}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-only-insecure-key-replace-me}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,0.0.0.0}
+      DATABASE_URL: postgres://${POSTGRES_USER:-support}:${POSTGRES_PASSWORD:-support}@db:5432/${POSTGRES_DB:-support}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      SEED_DEMO: ${SEED_DEMO:-true}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-demo12345}
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

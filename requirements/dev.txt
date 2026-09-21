@@ -1,0 +1,12 @@
+-r base.txt
+
+pytest~=8.4
+pytest-django~=4.11
+pytest-cov~=6.2
+factory-boy~=3.3
+ruff~=0.12
+black~=25.1
+mypy~=1.17
+django-stubs[compatible-mypy]~=5.2
+djangorestframework-stubs~=3.16
+pre-commit~=4.2

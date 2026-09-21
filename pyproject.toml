@@ -1,0 +1,89 @@
+[project]
+name = "support-request-management"
+version = "1.0.0"
+description = "REST API to manage customer support requests"
+requires-python = ">=3.12"
+
+# ---------------------------------------------------------------------------
+# Formatting / linting
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "DJ",   # flake8-django
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",
+]
+ignore = [
+    "B008",    # function call in default argument — DRF/Django idiom
+    "RUF012",  # mutable class attrs without ClassVar — Django idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"config/settings/*" = ["F403", "F405"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
+
+# ---------------------------------------------------------------------------
+# Typing — permissive on purpose: type hints are documentation here, not a gate
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+exclude = ["migrations/", "tests/"]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings.test"
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error::DeprecationWarning:apps.*", "error::DeprecationWarning:config.*"]
+
+[tool.coverage.run]
+source = ["apps", "config"]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    "config/asgi.py",
+    "config/wsgi.py",
+    # Environment-specific settings: exercised by running in that environment,
+    # not by asserting that a module of constants contains its constants.
+    "config/settings/production.py",
+    "config/settings/test.py",
+    "manage.py",
+    "*/management/commands/seed_demo.py",
+]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

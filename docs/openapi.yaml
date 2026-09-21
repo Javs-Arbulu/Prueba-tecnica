@@ -1,0 +1,1524 @@
+openapi: 3.0.3
+info:
+  title: Support Request Management API
+  version: 1.0.0
+  description: REST API used by internal agents to triage, assign and resolve customer
+    support requests. Every mutation is audited and every resource is addressed by
+    its public UUID.
+paths:
+  /api/v1/agents/:
+    get:
+      operationId: agents_list
+      description: Feeds the assignment picker. Inactive staff are never offered.
+      summary: Internal agents available for assignment
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - agents
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedUserList'
+          description: ''
+  /api/v1/auth/token/:
+    post:
+      operationId: auth_token_create
+      description: |-
+        Throttled: an unauthenticated endpoint that checks passwords is the
+        cheapest thing in the system to attack.
+      summary: Obtain an access/refresh token pair
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportTokenObtainPairRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SupportTokenObtainPairRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SupportTokenObtainPairRequest'
+        required: true
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/token/refresh/:
+    post:
+      operationId: auth_token_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/v1/health/:
+    get:
+      operationId: health_retrieve
+      description: |-
+        Liveness plus a real dependency check.
+
+        A health endpoint that only proves the process is up tells you nothing you
+        did not already know; this one opens the database connection.
+      summary: Liveness and database connectivity
+      tags:
+      - ops
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+              examples:
+                Healthy:
+                  value:
+                    status: ok
+                    database: ok
+                    time: '2026-01-01T00:00:00Z'
+                  summary: healthy
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/me/:
+    get:
+      operationId: me_retrieve
+      summary: The authenticated user
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/v1/public/tickets/:
+    post:
+      operationId: public_tickets_create
+      description: 'Unauthenticated intake. Throttled per IP and idempotent: send
+        an `Idempotency-Key` header, or rely on the 60-second duplicate window. A
+        replayed request answers `200` with the original ticket instead of creating
+        a second one (ADR-15).'
+      summary: Submit a support request
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+        description: Client-generated key; a repeat within 24h returns the same ticket.
+      tags:
+      - public
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicTicketCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PublicTicketCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PublicTicketCreateRequest'
+        required: true
+      security:
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketPublic'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketPublic'
+          description: Duplicate submission replayed
+        '429':
+          description: '`throttled`'
+  /api/v1/public/tickets/{public_id}/:
+    get:
+      operationId: public_tickets_retrieve
+      description: Status and dates only. No agent identity, no comments, no history.
+      summary: Track a support request
+      parameters:
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - public
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketPublic'
+          description: ''
+  /api/v1/tickets/:
+    get:
+      operationId: tickets_list
+      description: |-
+        The agent-facing ticket workflow.
+
+        There is no ``DELETE``: a reported incident is a fact, and destroying it
+        destroys the trail that made the system worth building (ADR-13).
+      parameters:
+      - in: query
+        name: assignee
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: created_after
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: created_before
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: customer_email
+        schema:
+          type: string
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: priority
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - HIGH
+            - LOW
+            - MEDIUM
+            - URGENT
+        description: |-
+          * `LOW` - Low
+          * `MEDIUM` - Medium
+          * `HIGH` - High
+          * `URGENT` - Urgent
+        explode: true
+        style: form
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - CLOSED
+            - IN_PROGRESS
+            - OPEN
+            - PENDING_CUSTOMER
+            - RESOLVED
+        description: |-
+          * `OPEN` - Open
+          * `IN_PROGRESS` - In progress
+          * `PENDING_CUSTOMER` - Pending customer
+          * `RESOLVED` - Resolved
+          * `CLOSED` - Closed
+        explode: true
+        style: form
+      - in: query
+        name: unassigned
+        schema:
+          type: boolean
+        description: Only unclaimed tickets
+      tags:
+      - tickets
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTicketListList'
+          description: ''
+    post:
+      operationId: tickets_create
+      description: Accepts an optional `Idempotency-Key`; a replay answers `200` with
+        the original ticket instead of creating a second one.
+      summary: Create a ticket on behalf of a customer
+      tags:
+      - tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentTicketCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AgentTicketCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AgentTicketCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: Duplicate request replayed
+  /api/v1/tickets/{public_id}/:
+    get:
+      operationId: tickets_retrieve
+      description: |-
+        The agent-facing ticket workflow.
+
+        There is no ``DELETE``: a reported incident is a fact, and destroying it
+        destroys the trail that made the system worth building (ADR-13).
+      parameters:
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+    patch:
+      operationId: tickets_partial_update
+      description: Only `subject` and `description`. State lives behind its own actions.
+      summary: Edit the descriptive fields
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        description: The `version` the client last read. When present and stale the
+          request is rejected with 409 `version_conflict` instead of silently overwriting
+          somebody else's change.
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTicketUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedTicketUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTicketUpdateRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+  /api/v1/tickets/{public_id}/assign/:
+    post:
+      operationId: tickets_assign_create
+      description: '`assignee_id: null` releases the ticket; an `IN_PROGRESS` ticket
+        then returns to `OPEN` (ADR-14).'
+      summary: Assign, reassign or release
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        description: The `version` the client last read. When present and stale the
+          request is rejected with 409 `version_conflict` instead of silently overwriting
+          somebody else's change.
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssignRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssignRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+  /api/v1/tickets/{public_id}/assign-to-me/:
+    post:
+      operationId: tickets_assign_to_me_create
+      description: Shortcut for the only assignment an agent makes all day.
+      summary: Take the ticket
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        description: The `version` the client last read. When present and stale the
+          request is rejected with 409 `version_conflict` instead of silently overwriting
+          somebody else's change.
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+  /api/v1/tickets/{public_id}/comments/:
+    get:
+      operationId: tickets_comments_list
+      description: |-
+        The agent-facing ticket workflow.
+
+        There is no ``DELETE``: a reported incident is a fact, and destroying it
+        destroys the trail that made the system worth building (ADR-13).
+      summary: List the comments
+      parameters:
+      - in: query
+        name: assignee
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: created_after
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: created_before
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: customer_email
+        schema:
+          type: string
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: priority
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - HIGH
+            - LOW
+            - MEDIUM
+            - URGENT
+        description: |-
+          * `LOW` - Low
+          * `MEDIUM` - Medium
+          * `HIGH` - High
+          * `URGENT` - Urgent
+        explode: true
+        style: form
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - CLOSED
+            - IN_PROGRESS
+            - OPEN
+            - PENDING_CUSTOMER
+            - RESOLVED
+        description: |-
+          * `OPEN` - Open
+          * `IN_PROGRESS` - In progress
+          * `PENDING_CUSTOMER` - Pending customer
+          * `RESOLVED` - Resolved
+          * `CLOSED` - Closed
+        explode: true
+        style: form
+      - in: query
+        name: unassigned
+        schema:
+          type: boolean
+        description: Only unclaimed tickets
+      tags:
+      - tickets
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCommentList'
+          description: ''
+    post:
+      operationId: tickets_comments_create
+      description: |-
+        The agent-facing ticket workflow.
+
+        There is no ``DELETE``: a reported incident is a fact, and destroying it
+        destroys the trail that made the system worth building (ADR-13).
+      summary: Add a comment
+      parameters:
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CommentCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CommentCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+          description: ''
+  /api/v1/tickets/{public_id}/priority/:
+    post:
+      operationId: tickets_priority_create
+      description: |-
+        The agent-facing ticket workflow.
+
+        There is no ``DELETE``: a reported incident is a fact, and destroying it
+        destroys the trail that made the system worth building (ADR-13).
+      summary: Reclassify the priority
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        description: The `version` the client last read. When present and stale the
+          request is rejected with 409 `version_conflict` instead of silently overwriting
+          somebody else's change.
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriorityChangeRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PriorityChangeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PriorityChangeRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+  /api/v1/tickets/{public_id}/status/:
+    post:
+      operationId: tickets_status_create
+      description: |-
+        The agent-facing ticket workflow.
+
+        There is no ``DELETE``: a reported incident is a fact, and destroying it
+        destroys the trail that made the system worth building (ADR-13).
+      summary: Change the status
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        description: The `version` the client last read. When present and stale the
+          request is rejected with 409 `version_conflict` instead of silently overwriting
+          somebody else's change.
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      tags:
+      - tickets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusChangeRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/StatusChangeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/StatusChangeRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: ''
+        '400':
+          description: '`invalid_transition` — includes the allowed set'
+        '409':
+          description: '`version_conflict` or `ticket_closed`'
+  /api/v1/tickets/{public_id}/timeline/:
+    get:
+      operationId: tickets_timeline_list
+      description: Status changes, assignments, reclassifications and comments in
+        one chronological feed, discriminated by `kind` (ADR-08).
+      summary: The unified history
+      parameters:
+      - in: query
+        name: assignee
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: created_after
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: created_before
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: customer_email
+        schema:
+          type: string
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: priority
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - HIGH
+            - LOW
+            - MEDIUM
+            - URGENT
+        description: |-
+          * `LOW` - Low
+          * `MEDIUM` - Medium
+          * `HIGH` - High
+          * `URGENT` - Urgent
+        explode: true
+        style: form
+      - in: path
+        name: public_id
+        schema:
+          type: string
+          pattern: ^[0-9a-fA-F-]{36}$
+        required: true
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - CLOSED
+            - IN_PROGRESS
+            - OPEN
+            - PENDING_CUSTOMER
+            - RESOLVED
+        description: |-
+          * `OPEN` - Open
+          * `IN_PROGRESS` - In progress
+          * `PENDING_CUSTOMER` - Pending customer
+          * `RESOLVED` - Resolved
+          * `CLOSED` - Closed
+        explode: true
+        style: form
+      - in: query
+        name: unassigned
+        schema:
+          type: boolean
+        description: Only unclaimed tickets
+      tags:
+      - tickets
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTimelineEntryList'
+          description: ''
+components:
+  schemas:
+    AgentTicketCreateRequest:
+      type: object
+      description: |-
+        Intake by an agent — typically a customer on the phone (ADR-10).
+
+        The agent may record what the customer claimed *and* classify it in one go.
+      properties:
+        customer:
+          $ref: '#/components/schemas/CustomerInputRequest'
+        subject:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: string
+          minLength: 10
+        reported_priority:
+          allOf:
+          - $ref: '#/components/schemas/TicketPriorityEnum'
+          default: MEDIUM
+        priority:
+          $ref: '#/components/schemas/TicketPriorityEnum'
+      required:
+      - customer
+      - description
+      - subject
+    AssignRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          default: ''
+          description: Why the change was made. Stored with the audit event.
+          maxLength: 2000
+        assignee_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Public id of the agent, or null to release the ticket.
+      required:
+      - assignee_id
+    Comment:
+      type: object
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        body:
+          type: string
+          readOnly: true
+        is_internal:
+          type: boolean
+          readOnly: true
+        author:
+          allOf:
+          - $ref: '#/components/schemas/User'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - author
+      - body
+      - created_at
+      - is_internal
+      - public_id
+    CommentCreateRequest:
+      type: object
+      properties:
+        body:
+          type: string
+          minLength: 1
+        is_internal:
+          type: boolean
+          default: true
+          description: Internal notes are never exposed by the public endpoints.
+      required:
+      - body
+    Customer:
+      type: object
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - email
+      - name
+      - public_id
+    CustomerInputRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 150
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+      required:
+      - email
+      - name
+    KindEnum:
+      enum:
+      - comment
+      - event
+      type: string
+      description: |-
+        * `comment` - comment
+        * `event` - event
+    PaginatedCommentList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+    PaginatedTicketListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketList'
+    PaginatedTimelineEntryList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimelineEntry'
+    PaginatedUserList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+    PatchedTicketUpdateRequest:
+      type: object
+      description: |-
+        PATCH is limited to descriptive fields; state changes have their own
+        endpoints so intent never has to be inferred from a diff (ADR-16).
+      properties:
+        subject:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: string
+          minLength: 10
+    PriorityChangeRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          default: ''
+          description: Why the change was made. Stored with the audit event.
+          maxLength: 2000
+        priority:
+          $ref: '#/components/schemas/TicketPriorityEnum'
+      required:
+      - priority
+    PublicTicketCreateRequest:
+      type: object
+      description: |-
+        What an unauthenticated customer is allowed to state.
+
+        Note what cannot be set from here: status, assignee, and the effective
+        priority. The customer reports a priority; triage decides one (ADR-09).
+      properties:
+        customer:
+          $ref: '#/components/schemas/CustomerInputRequest'
+        subject:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: string
+          minLength: 10
+        reported_priority:
+          allOf:
+          - $ref: '#/components/schemas/TicketPriorityEnum'
+          default: MEDIUM
+      required:
+      - customer
+      - description
+      - subject
+    StatusChangeRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          default: ''
+          description: Why the change was made. Stored with the audit event.
+          maxLength: 2000
+        status:
+          $ref: '#/components/schemas/TicketStatusEnum'
+      required:
+      - status
+    SupportTokenObtainPairRequest:
+      type: object
+      description: |-
+        Adds the role to the token and the user object to the login response.
+
+        The client needs the role to render the right controls; making it do a second
+        round trip to ``/me/`` right after logging in is gratuitous.
+      properties:
+        email:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - email
+      - password
+    TicketDetail:
+      type: object
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        subject:
+          type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/TicketStatusEnum'
+          readOnly: true
+        priority:
+          allOf:
+          - $ref: '#/components/schemas/TicketPriorityEnum'
+          readOnly: true
+        reported_priority:
+          allOf:
+          - $ref: '#/components/schemas/TicketPriorityEnum'
+          readOnly: true
+        customer:
+          allOf:
+          - $ref: '#/components/schemas/Customer'
+          readOnly: true
+        assignee:
+          allOf:
+          - $ref: '#/components/schemas/User'
+          readOnly: true
+        comment_count:
+          type: integer
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        description:
+          type: string
+          readOnly: true
+        created_by:
+          allOf:
+          - $ref: '#/components/schemas/User'
+          readOnly: true
+        allowed_transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketStatusEnum'
+          readOnly: true
+        first_assigned_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - allowed_transitions
+      - assignee
+      - closed_at
+      - comment_count
+      - created_at
+      - created_by
+      - customer
+      - description
+      - first_assigned_at
+      - priority
+      - public_id
+      - reported_priority
+      - resolved_at
+      - status
+      - subject
+      - updated_at
+      - version
+    TicketList:
+      type: object
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        subject:
+          type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/TicketStatusEnum'
+          readOnly: true
+        priority:
+          allOf:
+          - $ref: '#/components/schemas/TicketPriorityEnum'
+          readOnly: true
+        reported_priority:
+          allOf:
+          - $ref: '#/components/schemas/TicketPriorityEnum'
+          readOnly: true
+        customer:
+          allOf:
+          - $ref: '#/components/schemas/Customer'
+          readOnly: true
+        assignee:
+          allOf:
+          - $ref: '#/components/schemas/User'
+          readOnly: true
+        comment_count:
+          type: integer
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - assignee
+      - comment_count
+      - created_at
+      - customer
+      - priority
+      - public_id
+      - reported_priority
+      - status
+      - subject
+      - updated_at
+      - version
+    TicketPriorityEnum:
+      enum:
+      - LOW
+      - MEDIUM
+      - HIGH
+      - URGENT
+      type: string
+      description: |-
+        * `LOW` - Low
+        * `MEDIUM` - Medium
+        * `HIGH` - High
+        * `URGENT` - Urgent
+    TicketPublic:
+      type: object
+      description: |-
+        What a customer may see about their own ticket.
+
+        Subject, status and dates — no description of internal work, no agent
+        identity, no history, no comments (ADR-03).
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        subject:
+          type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/TicketStatusEnum'
+          readOnly: true
+        status_display:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        resolved_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - closed_at
+      - created_at
+      - public_id
+      - resolved_at
+      - status
+      - status_display
+      - subject
+      - updated_at
+    TicketStatusEnum:
+      enum:
+      - OPEN
+      - IN_PROGRESS
+      - PENDING_CUSTOMER
+      - RESOLVED
+      - CLOSED
+      type: string
+      description: |-
+        * `OPEN` - Open
+        * `IN_PROGRESS` - In progress
+        * `PENDING_CUSTOMER` - Pending customer
+        * `RESOLVED` - Resolved
+        * `CLOSED` - Closed
+    TimelineComment:
+      type: object
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        body:
+          type: string
+          readOnly: true
+        is_internal:
+          type: boolean
+          readOnly: true
+      required:
+      - body
+      - is_internal
+      - public_id
+    TimelineEntry:
+      type: object
+      description: |-
+        One row of the merged history feed.
+
+        Because every comment also produces a ``COMMENT_ADDED`` event, the timeline
+        is a single ordered queryset rather than two lists zipped in Python — which
+        is what lets it be cursor-paginated correctly (ADR-08).
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        kind:
+          allOf:
+          - $ref: '#/components/schemas/KindEnum'
+          readOnly: true
+        type:
+          type: string
+          readOnly: true
+        actor:
+          allOf:
+          - $ref: '#/components/schemas/User'
+          readOnly: true
+        field:
+          type: string
+          readOnly: true
+        old_value:
+          type: string
+          readOnly: true
+        new_value:
+          type: string
+          readOnly: true
+        note:
+          type: string
+          readOnly: true
+        comment:
+          allOf:
+          - $ref: '#/components/schemas/TimelineComment'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - actor
+      - comment
+      - created_at
+      - field
+      - id
+      - kind
+      - new_value
+      - note
+      - old_value
+      - type
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+      required:
+      - access
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - refresh
+    User:
+      type: object
+      description: |-
+        The only representation of an internal user the API ever returns.
+
+        Note what is absent: ``id``, ``password``, ``is_superuser``, ``last_login``.
+      properties:
+        public_id:
+          type: string
+          format: uuid
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+          title: Email address
+        first_name:
+          type: string
+          readOnly: true
+        last_name:
+          type: string
+          readOnly: true
+        display_name:
+          type: string
+          readOnly: true
+        role:
+          allOf:
+          - $ref: '#/components/schemas/UserRoleEnum'
+          readOnly: true
+      required:
+      - display_name
+      - email
+      - first_name
+      - last_name
+      - public_id
+      - role
+    UserRoleEnum:
+      enum:
+      - AGENT
+      - SUPERVISOR
+      type: string
+      description: |-
+        * `AGENT` - Agent
+        * `SUPERVISOR` - Supervisor
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+tags:
+- name: public
+  description: Unauthenticated endpoints used by customers.
+- name: auth
+  description: Token issuing and the current user.
+- name: tickets
+  description: Agent-facing ticket workflow.
+- name: agents
+  description: Internal staff directory.
+- name: ops
+  description: Operational endpoints.
