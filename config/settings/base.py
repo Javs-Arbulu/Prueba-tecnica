@@ -109,6 +109,10 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
+# No endpoint accepts uploads, so the 2.5 MB Django allows by default is 2.5 MB
+# of head room an open endpoint does not need.
+DATA_UPLOAD_MAX_MEMORY_SIZE = env.int("DATA_UPLOAD_MAX_MEMORY_SIZE", default=1024 * 1024)
+
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
@@ -121,6 +125,16 @@ REST_FRAMEWORK: dict[str, Any] = {
     ],
     # Authenticated by default; the two public endpoints opt out explicitly.
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    # JSON only. The browsable API is a development convenience, and in
+    # production it is an HTML form over every endpoint, including the open one.
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    # How many proxies sit in front of this process, and the single most
+    # important number on this page. DRF's own default (None) trusts
+    # X-Forwarded-For whenever it is present, which means anyone can invent a
+    # value and get a fresh rate-limit bucket on every request. 0 pins identity
+    # to REMOTE_ADDR. A deployment behind N proxies sets it to N so the limit
+    # follows the real client instead of collapsing onto the load balancer.
+    "NUM_PROXIES": env.int("NUM_PROXIES", default=0),
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.DefaultPageNumberPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_FILTER_BACKENDS": [
@@ -135,6 +149,9 @@ REST_FRAMEWORK: dict[str, Any] = {
         "public_ticket_read": env("THROTTLE_PUBLIC_READ", default="120/hour"),
         # Credential stuffing is the cheapest attack against any login form.
         "auth_token": env("THROTTLE_AUTH_TOKEN", default="10/min"),
+        # Per reported email, on top of the per-IP limit: the edge sees addresses,
+        # not customers, so this is the dimension infrastructure cannot cover.
+        "public_ticket_email": env("THROTTLE_PUBLIC_EMAIL", default="5/hour"),
     },
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "DATETIME_FORMAT": "iso-8601",
@@ -218,6 +235,11 @@ LOGGING: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 PUBLIC_TICKET_DEDUPE_WINDOW_SECONDS = env.int("PUBLIC_TICKET_DEDUPE_WINDOW_SECONDS", default=60)
 IDEMPOTENCY_KEY_WINDOW_SECONDS = env.int("IDEMPOTENCY_KEY_WINDOW_SECONDS", default=86_400)
+
+#: Whether the deployment must refuse to boot on a per-process cache. Throttle
+#: counters live in the cache, so a local one silently multiplies every limit by
+#: the number of workers. False here, True in production.
+REQUIRE_SHARED_CACHE = env.bool("REQUIRE_SHARED_CACHE", default=False)
 
 #: Password handed to every account created by `manage.py seed_demo` (demo only).
 DEMO_PASSWORD = env("DEMO_PASSWORD", default="demo12345")

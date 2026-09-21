@@ -87,10 +87,11 @@ def create_ticket(
             return TicketCreation(ticket=duplicate, created=False)
 
     with transaction.atomic():
-        customer = _resolve_customer(name=customer_name, email=customer_email)
+        customer = _resolve_customer(name=customer_name, email=customer_email, actor=actor)
         ticket = Ticket.objects.create(
             subject=subject.strip(),
             description=description.strip(),
+            reported_by_name=customer_name.strip()[:150],
             reported_priority=reported_priority,
             # Triage starts from what the customer reported and the agent may
             # reclassify it later; the reported value is never overwritten.
@@ -440,15 +441,20 @@ def _record(
     )
 
 
-def _resolve_customer(*, name: str, email: str) -> Customer:
-    """Customers are identified by email; a new address creates a new customer."""
+def _resolve_customer(*, name: str, email: str, actor: User | None) -> Customer:
+    """Customers are identified by email; a new address creates a new customer.
+
+    An existing customer's name is only corrected by an authenticated agent. The
+    public endpoint may not touch it: anyone who knows an address could otherwise
+    rewrite that customer's name in every agent's screen, and the submitted name
+    is kept on the ticket instead, where it belongs.
+    """
     normalised = Customer.normalise_email(email)
     customer, created = Customer.objects.get_or_create(
-        email=normalised, defaults={"name": name.strip()}
+        email=normalised, defaults={"name": name.strip()[:150]}
     )
-    if not created and name.strip() and customer.name != name.strip():
-        # People change how they sign their messages; keep the latest spelling.
-        customer.name = name.strip()
+    if not created and actor is not None and name.strip() and customer.name != name.strip():
+        customer.name = name.strip()[:150]
         customer.save(update_fields=["name"])
     return customer
 

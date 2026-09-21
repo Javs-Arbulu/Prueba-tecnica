@@ -152,7 +152,11 @@ def test_public_creation_is_throttled_per_client(api_client, monkeypatch):
     monkeypatch.setattr(
         SimpleRateThrottle,
         "THROTTLE_RATES",
-        {"public_ticket_create": "2/min", "public_ticket_read": "1000/hour"},
+        {
+            "public_ticket_create": "2/min",
+            "public_ticket_read": "1000/hour",
+            "public_ticket_email": "1000/hour",
+        },
     )
 
     for index in range(2):

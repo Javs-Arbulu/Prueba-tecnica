@@ -19,6 +19,11 @@ from apps.tickets.enums import Priority, Status
 from apps.tickets.models import Comment, Ticket, TicketEvent
 
 NOTE_MAX_LENGTH = 2_000
+#: Roughly ten pages. Generous enough for somebody pasting a stack trace, small
+#: enough that an open endpoint cannot be used to push megabytes into the
+#: database one request at a time. Attachments are the real answer, and they are
+#: declared out of scope.
+LONG_TEXT_MAX_LENGTH = 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +43,7 @@ class PublicTicketCreateSerializer(serializers.Serializer):
 
     customer = CustomerInputSerializer()
     subject = serializers.CharField(max_length=200, min_length=3)
-    description = serializers.CharField(min_length=10)
+    description = serializers.CharField(min_length=10, max_length=LONG_TEXT_MAX_LENGTH)
     reported_priority = serializers.ChoiceField(choices=Priority.choices, default=Priority.MEDIUM)
 
 
@@ -97,11 +102,13 @@ class TicketUpdateSerializer(serializers.Serializer):
     endpoints so intent never has to be inferred from a diff (ADR-16)."""
 
     subject = serializers.CharField(max_length=200, min_length=3, required=False)
-    description = serializers.CharField(min_length=10, required=False)
+    description = serializers.CharField(
+        min_length=10, max_length=LONG_TEXT_MAX_LENGTH, required=False
+    )
 
 
 class CommentCreateSerializer(serializers.Serializer):
-    body = serializers.CharField(min_length=1)
+    body = serializers.CharField(min_length=1, max_length=LONG_TEXT_MAX_LENGTH)
     is_internal = serializers.BooleanField(
         default=True,
         help_text="Internal notes are never exposed by the public endpoints.",
@@ -143,6 +150,7 @@ class TicketDetailSerializer(TicketListSerializer):
         fields = (
             *TicketListSerializer.Meta.fields,
             "description",
+            "reported_by_name",
             "created_by",
             "allowed_transitions",
             "first_assigned_at",

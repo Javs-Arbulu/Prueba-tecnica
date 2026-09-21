@@ -174,7 +174,7 @@ Base path: `/api/v1/`. Every resource is addressed by its public UUID.
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/public/tickets/` | Throttled per IP. Idempotent. `201` on create, `200` when a duplicate is replayed. |
+| POST | `/public/tickets/` | Throttled per IP **and** per reported email. Idempotent: `201` on create, `200` when a duplicate is replayed. JSON only. |
 | GET | `/public/tickets/{uuid}/` | Subject, status and dates. Nothing else. |
 
 ### Authentication
@@ -241,6 +241,7 @@ Every failure — validation, permission, domain rule, crash — has one shape:
 | `permission_denied` | 403 | Role or ownership rule |
 | `not_found` | 404 | Unknown UUID |
 | `version_conflict` | 409 | Stale `If-Match` |
+| `request_too_large` | 413 | Body over `DATA_UPLOAD_MAX_MEMORY_SIZE`, on every path |
 | `ticket_closed` | 409 | Write against a terminal ticket |
 | `throttled` | 429 | Public intake rate limit |
 | `server_error` | 500 | Unhandled — logged with the same `request_id` |
@@ -490,6 +491,10 @@ What is actually asserted, in order of value:
 14. **The login endpoint is throttled**, and the read-only admin really is read-only.
 15. **`OPTIONS` describes an endpoint** instead of refusing it, and a body that is not
     JSON gets its own error code rather than borrowing the validation one.
+16. **The open endpoint holds up under abuse** — a public submission cannot rename a
+    customer, `X-Forwarded-For` cannot buy a fresh rate-limit bucket, one email is
+    limited across many addresses, oversized bodies answer `413` in the same envelope,
+    and only JSON is accepted.
 
 What is not tested: that Django saves to the database.
 
@@ -503,6 +508,21 @@ What is not tested: that Django saves to the database.
   process is running.
 - **The login endpoint is rate limited** (`auth_token`, 10/min by default): an
   unauthenticated endpoint that checks passwords is the cheapest thing here to attack.
+- **`NUM_PROXIES` defaults to 0, and that matters.** DRF's own default trusts
+  `X-Forwarded-For` whenever it is present, which lets anyone invent a value and get
+  a fresh rate-limit bucket on every request. Pinning it to 0 identifies clients by
+  `REMOTE_ADDR`. **A deployment behind N proxies must set it to N**, or every client
+  shares the load balancer's single bucket.
+- **The open endpoint is limited twice**: per IP (20/hour) and per reported email
+  (5/hour). The edge sees addresses, not customers, so the second dimension is the
+  one infrastructure cannot provide.
+- **An open endpoint cannot rewrite an identity.** A public submission never updates
+  an existing customer's name; the name it carries is stored on the ticket as
+  `reported_by_name`, where a mismatch is a signal instead of a silent overwrite.
+- **Text fields are bounded** (20,000 characters) and the request body is capped at
+  1 MB, because no endpoint accepts uploads.
+- **Production refuses to boot on a per-process cache.** Throttle counters live
+  there, so a local cache silently multiplies every limit by the number of workers.
 - **Query strings stay out of the logs.** `?customer_email=` and `?search=` carry
   personal data, and an access log is the wrong place to keep it.
 - **No secrets in the repository** — `django-environ` plus a complete `.env.example`.

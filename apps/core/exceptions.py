@@ -16,6 +16,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+from django.core.exceptions import RequestDataTooBig
 from django.http import Http404
 from rest_framework import status
 from rest_framework.exceptions import APIException
@@ -117,7 +118,19 @@ def build_error_payload(
     }
 
 
+#: Django raises this while reading the body, which can happen inside a throttle,
+#: a parser or the view. It is not an APIException, so DRF would treat it as a
+#: crash; naming it here keeps one answer for one condition.
+REQUEST_TOO_LARGE_MESSAGE = "The request body is larger than this API accepts."
+
+
 def api_exception_handler(exc: Exception, context: dict[str, Any]) -> Response | None:
+    if isinstance(exc, RequestDataTooBig):
+        return Response(
+            build_error_payload(code="request_too_large", message=REQUEST_TOO_LARGE_MESSAGE),
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
+
     response = drf_exception_handler(exc, context)
 
     if response is None:

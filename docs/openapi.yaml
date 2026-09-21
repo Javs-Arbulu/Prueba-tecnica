@@ -173,10 +173,10 @@ paths:
   /api/v1/public/tickets/:
     post:
       operationId: public_tickets_create
-      description: 'Unauthenticated intake. Throttled per IP and idempotent: send
-        an `Idempotency-Key` header, or rely on the 60-second duplicate window. A
-        replayed request answers `200` with the original ticket instead of creating
-        a second one (ADR-15).'
+      description: 'Unauthenticated intake. Throttled per IP and per reported email,
+        and idempotent: send an `Idempotency-Key` header, or rely on the 60-second
+        duplicate window. A replayed request answers `200` with the original ticket
+        instead of creating a second one (ADR-15).'
       summary: Submit a support request
       parameters:
       - in: header
@@ -189,12 +189,6 @@ paths:
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/PublicTicketCreateRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PublicTicketCreateRequest'
-          multipart/form-data:
             schema:
               $ref: '#/components/schemas/PublicTicketCreateRequest'
         required: true
@@ -892,6 +886,7 @@ components:
         description:
           type: string
           minLength: 10
+          maxLength: 20000
         reported_priority:
           allOf:
           - $ref: '#/components/schemas/TicketPriorityEnum'
@@ -950,6 +945,7 @@ components:
         body:
           type: string
           minLength: 1
+          maxLength: 20000
         is_internal:
           type: boolean
           default: true
@@ -1107,6 +1103,7 @@ components:
         description:
           type: string
           minLength: 10
+          maxLength: 20000
     PriorityChangeRequest:
       type: object
       properties:
@@ -1136,6 +1133,7 @@ components:
         description:
           type: string
           minLength: 10
+          maxLength: 20000
         reported_priority:
           allOf:
           - $ref: '#/components/schemas/TicketPriorityEnum'
@@ -1222,6 +1220,9 @@ components:
         description:
           type: string
           readOnly: true
+        reported_by_name:
+          type: string
+          readOnly: true
         created_by:
           allOf:
           - $ref: '#/components/schemas/User'
@@ -1258,6 +1259,7 @@ components:
       - first_assigned_at
       - priority
       - public_id
+      - reported_by_name
       - reported_priority
       - resolved_at
       - status

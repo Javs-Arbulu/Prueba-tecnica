@@ -23,6 +23,8 @@ CACHES = {
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "public_ticket_create": "1000/hour",
     "public_ticket_read": "1000/hour",
+    "public_ticket_email": "1000/hour",
+    "auth_token": "1000/min",
 }
 
 LOGGING["root"]["level"] = "CRITICAL"

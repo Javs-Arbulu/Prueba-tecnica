@@ -17,6 +17,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView, RetrieveAPIView
 from rest_framework.pagination import BasePagination
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -43,6 +44,7 @@ from apps.tickets.serializers import (
     TicketUpdateSerializer,
     TimelineEntrySerializer,
 )
+from apps.tickets.throttling import enforce_email_rate_limit
 
 UUID_URL_REGEX = "[0-9a-fA-F-]{36}"
 
@@ -385,7 +387,8 @@ class TicketViewSet(
     tags=["public"],
     summary="Submit a support request",
     description=(
-        "Unauthenticated intake. Throttled per IP and idempotent: send an "
+        "Unauthenticated intake. Throttled per IP and per reported email, and "
+        "idempotent: send an "
         "`Idempotency-Key` header, or rely on the 60-second duplicate window. "
         "A replayed request answers `200` with the original ticket instead of "
         "creating a second one (ADR-15)."
@@ -409,6 +412,11 @@ class TicketViewSet(
 class PublicTicketCreateView(GenericAPIView):
     authentication_classes: list = []
     permission_classes = [AllowAny]
+    # JSON only: this endpoint never receives a file, and the multipart parser is
+    # the machinery that would handle one.
+    parser_classes = [JSONParser]
+    # Per IP, before anything is parsed. The per-email limit is applied inside
+    # post(), once there is a validated address to count against.
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "public_ticket_create"
     serializer_class = PublicTicketCreateSerializer
@@ -417,6 +425,7 @@ class PublicTicketCreateView(GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        enforce_email_rate_limit(request, self, email=data["customer"]["email"])
         result = services.create_ticket(
             subject=data["subject"],
             description=data["description"],
@@ -445,6 +454,7 @@ class PublicTicketCreateView(GenericAPIView):
 class PublicTicketDetailView(RetrieveAPIView):
     authentication_classes: list = []
     permission_classes = [AllowAny]
+    parser_classes = [JSONParser]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "public_ticket_read"
     serializer_class = TicketPublicSerializer

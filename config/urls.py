@@ -48,6 +48,13 @@ api_v1_patterns = [
     *router.urls,
 ]
 
+# Every failure answers with the same envelope, including the ones Django handles
+# before DRF is involved. See apps/core/views.py.
+handler400 = "apps.core.views.bad_request"
+handler403 = "apps.core.views.permission_denied"
+handler404 = "apps.core.views.not_found"
+handler500 = "apps.core.views.server_error"
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/", include(api_v1_patterns)),

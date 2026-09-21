@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from django.core.exceptions import RequestDataTooBig
 from django.db import connection
+from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiExample, extend_schema
 from rest_framework import status
@@ -9,6 +11,8 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.views import APIView
+
+from apps.core.exceptions import REQUEST_TOO_LARGE_MESSAGE, build_error_payload
 
 
 class HealthView(APIView):
@@ -97,3 +101,36 @@ class APIRootView(APIView):
                 "operations": {"health": absolute("health")},
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Django's own error handlers
+#
+# Some failures never reach DRF: a body over DATA_UPLOAD_MAX_MEMORY_SIZE, a
+# disallowed Host, a URL that matches nothing. Django answers those itself, in
+# HTML, which would leave exactly one class of response a client cannot parse.
+# These give them the same envelope as everything else. Django ignores them
+# while DEBUG is on, so the developer keeps the traceback page.
+# ---------------------------------------------------------------------------
+def _envelope(status: int, code: str, message: str) -> JsonResponse:
+    return JsonResponse(build_error_payload(code=code, message=message), status=status)
+
+
+def bad_request(request: HttpRequest, exception: Exception | None = None) -> JsonResponse:
+    if isinstance(exception, RequestDataTooBig):
+        # 413, not the 400 Django would have used: the condition has its own
+        # status code and the API says the same thing on every path.
+        return _envelope(413, "request_too_large", REQUEST_TOO_LARGE_MESSAGE)
+    return _envelope(400, "malformed_request", "The request could not be processed.")
+
+
+def permission_denied(request: HttpRequest, exception: Exception | None = None) -> JsonResponse:
+    return _envelope(403, "permission_denied", "You do not have permission to access this.")
+
+
+def not_found(request: HttpRequest, exception: Exception | None = None) -> JsonResponse:
+    return _envelope(404, "not_found", "No resource matches this URL.")
+
+
+def server_error(request: HttpRequest) -> JsonResponse:
+    return _envelope(500, "server_error", "An unexpected error occurred.")

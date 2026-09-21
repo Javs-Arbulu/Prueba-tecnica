@@ -20,6 +20,9 @@ X_FRAME_OPTIONS = "DENY"
 
 CORS_ALLOW_ALL_ORIGINS = False
 
+# Rate limits are only real if every worker counts against the same store.
+REQUIRE_SHARED_CACHE = True
+
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",

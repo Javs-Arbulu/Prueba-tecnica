@@ -62,6 +62,12 @@ class Ticket(models.Model):
     customer = models.ForeignKey(
         "customers.Customer", on_delete=models.PROTECT, related_name="tickets"
     )
+    # The name whoever opened this ticket typed, kept on the ticket rather than
+    # written through to the customer record: the public endpoint is open, and an
+    # open endpoint must not be able to rewrite somebody else's identity. When it
+    # differs from `customer.name` an agent is looking at either a colleague
+    # reporting on someone's behalf, or an impersonation attempt.
+    reported_by_name = models.CharField(max_length=150, blank=True, default="")
     assignee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
