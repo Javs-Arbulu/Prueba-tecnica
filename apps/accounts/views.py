@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.accounts.models import User
 from apps.accounts.serializers import SupportTokenObtainPairSerializer, UserSerializer
+from apps.core.pagination import DirectoryPagination
 
 
 @extend_schema(tags=["auth"], summary="Obtain an access/refresh token pair")
@@ -32,6 +33,7 @@ class AgentListView(generics.ListAPIView):
     """Feeds the assignment picker. Inactive staff are never offered."""
 
     serializer_class = UserSerializer
+    pagination_class = DirectoryPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["first_name", "last_name", "email"]
     ordering_fields = ["first_name", "last_name", "email"]

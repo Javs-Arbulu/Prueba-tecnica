@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 
 
@@ -51,3 +52,48 @@ class HealthView(APIView):
         except Exception:
             return False
         return True
+
+
+class APIRootView(APIView):
+    """An index of the API.
+
+    DRF's own router root lists only the registered viewsets, which here means a
+    single link to /tickets/ and no hint that authentication, the public intake
+    or the docs exist. Somebody who opens the base URL deserves the whole map.
+    """
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["ops"],
+        summary="Index of the API",
+        responses={200: dict},
+    )
+    def get(self, request: Request) -> Response:
+        def absolute(name: str) -> str:
+            return reverse(name, request=request)
+
+        return Response(
+            {
+                "documentation": {
+                    "swagger": request.build_absolute_uri("/api/docs/"),
+                    "redoc": request.build_absolute_uri("/api/redoc/"),
+                    "schema": request.build_absolute_uri("/api/schema/"),
+                },
+                "public": {
+                    "submit_request": absolute("public-ticket-create"),
+                    "track_request": absolute("public-ticket-create") + "{uuid}/",
+                },
+                "authentication": {
+                    "obtain_token": absolute("token-obtain-pair"),
+                    "refresh_token": absolute("token-refresh"),
+                    "current_user": absolute("me"),
+                },
+                "agents": {
+                    "tickets": absolute("ticket-list"),
+                    "directory": absolute("agent-list"),
+                },
+                "operations": {"health": absolute("health")},
+            }
+        )

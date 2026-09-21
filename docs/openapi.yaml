@@ -6,6 +6,28 @@ info:
     support requests. Every mutation is audited and every resource is addressed by
     its public UUID.
 paths:
+  /api/v1/:
+    get:
+      operationId: root_retrieve
+      description: |-
+        An index of the API.
+
+        DRF's own router root lists only the registered viewsets, which here means a
+        single link to /tickets/ and no hint that authentication, the public intake
+        or the docs exist. Somebody who opens the base URL deserves the whole map.
+      summary: Index of the API
+      tags:
+      - ops
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/agents/:
     get:
       operationId: agents_list

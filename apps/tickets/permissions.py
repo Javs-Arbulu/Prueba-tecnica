@@ -99,6 +99,8 @@ VIEW_ACTION_MAP: dict[str, Action] = {
     "list": Action.VIEW,
     "retrieve": Action.VIEW,
     "timeline": Action.VIEW,
+    # DRF names the OPTIONS handler "metadata"; describing an endpoint is a read.
+    "metadata": Action.VIEW,
     "create": Action.CREATE,
     "partial_update": Action.UPDATE_DETAILS,
     "change_status": Action.CHANGE_STATUS,

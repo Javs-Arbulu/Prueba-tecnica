@@ -16,6 +16,18 @@ class DefaultPageNumberPagination(PageNumberPagination):
     max_page_size = 100
 
 
+class DirectoryPagination(PageNumberPagination):
+    """For short, bounded lists that a picker renders whole.
+
+    Paginating the agent directory at 20 would silently hide the rest of the
+    desk behind a "next" link no select box ever follows.
+    """
+
+    page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
 class CreatedAtCursorPagination(CursorPagination):
     page_size = 25
     max_page_size = 100

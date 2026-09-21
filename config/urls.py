@@ -12,14 +12,16 @@ from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
-from rest_framework.routers import DefaultRouter
+from rest_framework.routers import SimpleRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.accounts.views import AgentListView, MeView, SupportTokenObtainPairView
-from apps.core.views import HealthView
+from apps.core.views import APIRootView, HealthView
 from apps.tickets.views import PublicTicketCreateView, PublicTicketDetailView, TicketViewSet
 
-router = DefaultRouter()
+# SimpleRouter, not DefaultRouter: the index below replaces its root view,
+# which would only ever list the registered viewsets.
+router = SimpleRouter()
 router.register("tickets", TicketViewSet, basename="ticket")
 
 public_patterns = [
@@ -37,6 +39,7 @@ auth_patterns = [
 ]
 
 api_v1_patterns = [
+    path("", APIRootView.as_view(), name="api-root"),
     path("public/", include(public_patterns)),
     path("auth/", include(auth_patterns)),
     path("me/", MeView.as_view(), name="me"),

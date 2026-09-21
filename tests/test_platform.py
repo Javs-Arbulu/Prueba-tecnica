@@ -162,3 +162,53 @@ def test_an_unhandled_exception_still_answers_the_error_contract():
     assert response.data["error"]["code"] == "server_error"
     assert set(response.data["error"]) == {"code", "message", "details", "request_id"}
     assert "boom" not in response.data["error"]["message"]  # internals stay internal
+
+
+def test_the_api_root_maps_every_entry_point(api_client):
+    """Whoever opens the base URL should find the whole API, not one link."""
+    response = api_client.get("/api/v1/")
+
+    assert response.status_code == 200
+    assert set(response.data) == {
+        "documentation",
+        "public",
+        "authentication",
+        "agents",
+        "operations",
+    }
+    assert response.data["documentation"]["swagger"].endswith("/api/docs/")
+    assert response.data["public"]["submit_request"].endswith("/api/v1/public/tickets/")
+
+
+def test_options_describes_the_endpoint_instead_of_refusing(agent_client, ticket):
+    """DRF calls the OPTIONS handler `metadata`; describing a route is a read."""
+    on_list = agent_client.options("/api/v1/tickets/")
+    on_detail = agent_client.options(f"/api/v1/tickets/{ticket.public_id}/")
+
+    assert (on_list.status_code, on_detail.status_code) == (200, 200)
+    assert "actions" in on_list.data
+
+
+def test_a_body_that_is_not_json_gets_its_own_error_code(api_client):
+    """`validation_error.details.fields` must always be an object, so a body that
+    never parsed cannot borrow that code."""
+    response = api_client.post(
+        "/api/v1/public/tickets/", data="{not json", content_type="application/json"
+    )
+
+    assert response.status_code == 400
+    assert response.data["error"]["code"] == "malformed_request"
+    assert response.data["error"]["details"] == {}
+
+
+def test_the_agent_directory_is_not_hidden_behind_pagination(agent_client, supervisor):
+    """A picker that shows 20 of 50 agents is a bug found at the worst moment."""
+    from tests.factories import UserFactory
+
+    for _ in range(25):
+        UserFactory()
+
+    response = agent_client.get("/api/v1/agents/")
+
+    assert response.data["next"] is None
+    assert len(response.data["results"]) == response.data["count"]

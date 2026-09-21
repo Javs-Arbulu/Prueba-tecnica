@@ -83,7 +83,10 @@ class InvalidAssignment(DomainError):
 #: DRF speaks its own vocabulary of codes; this is the translation into ours.
 _DRF_CODE_MAP = {
     "invalid": "validation_error",
-    "parse_error": "validation_error",
+    # Deliberately NOT validation_error: a body that is not JSON has no fields to
+    # report, and `details.fields` must always be an object for the clients that
+    # index into it.
+    "parse_error": "malformed_request",
     "authentication_failed": "not_authenticated",
     "not_authenticated": "not_authenticated",
     "permission_denied": "permission_denied",

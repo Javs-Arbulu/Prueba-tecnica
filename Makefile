@@ -37,7 +37,10 @@ migrate: ## Apply migrations
 seed: ## Load the demo dataset
 	$(COMPOSE) run --rm web python manage.py seed_demo
 
+smoke: ## Run the end-to-end smoke test against a running stack
+	./scripts/smoke-test.sh
+
 schema: ## Regenerate docs/openapi.yaml
 	$(COMPOSE) run --rm web python manage.py spectacular --file docs/openapi.yaml
 
-.PHONY: help up down reset shell test lint typecheck format migrations migrate seed schema
+.PHONY: help up down reset shell test lint typecheck format migrations migrate seed smoke schema

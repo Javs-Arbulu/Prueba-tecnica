@@ -19,7 +19,8 @@ loads a demo dataset and serves the API on <http://localhost:8000>.
 
 | What | Where |
 |---|---|
-| Swagger UI | <http://localhost:8000/api/docs/> |
+| API index | <http://localhost:8000/api/v1/> — every entry point, no token needed |
+| Swagger UI | <http://localhost:8000/api/docs/> — 19 operations over 16 routes |
 | ReDoc | <http://localhost:8000/api/redoc/> |
 | OpenAPI schema | <http://localhost:8000/api/schema/> · committed at [`docs/openapi.yaml`](docs/openapi.yaml) |
 | Read-only admin | <http://localhost:8000/admin/> |
@@ -51,7 +52,24 @@ curl -s localhost:8000/api/v1/public/tickets/ \
        "reported_priority":"HIGH"}'
 ```
 
-More ready-to-run calls: [`docs/requests.http`](docs/requests.http).
+Two ways to exercise the whole thing at once:
+
+```bash
+./scripts/smoke-test.sh   # or: make smoke
+```
+
+It walks public intake, idempotency, login, an illegal transition, a version
+conflict, the timeline, what a customer may see, permissions and the refused
+delete — asserting the status code of each and failing loudly on the first
+surprise.
+
+For a request-by-request tour, [`docs/requests.http`](docs/requests.http) runs in
+VS Code (REST Client) or JetBrains. Postman users can import
+[`docs/postman_collection.json`](docs/postman_collection.json): 40 requests in 7
+folders that chain their own variables, with 77 assertions, so the Collection
+Runner is the same end-to-end check in a UI (verified green with Newman). Both endpoints the collection leans
+on are rate limited on purpose, so run it at most twice a minute — or
+`docker compose restart web` to reset the counters.
 
 Other useful commands (all wrapped in the [`Makefile`](Makefile)):
 
@@ -171,6 +189,7 @@ Base path: `/api/v1/`. Every resource is addressed by its public UUID.
 
 | Method | Path | Notes |
 |---|---|---|
+| GET | `/api/v1/` | Index of every entry point, unauthenticated |
 | GET | `/tickets/` | Filters, search, ordering, pagination |
 | POST | `/tickets/` | Intake on behalf of a customer; accepts `Idempotency-Key` |
 | GET | `/tickets/{uuid}/` | Includes `version` and `allowed_transitions`; sends an `ETag` |
@@ -181,7 +200,7 @@ Base path: `/api/v1/`. Every resource is addressed by its public UUID.
 | POST | `/tickets/{uuid}/assign-to-me/` | Shortcut for the common case |
 | GET · POST | `/tickets/{uuid}/comments/` | Cursor-paginated; internal by default |
 | GET | `/tickets/{uuid}/timeline/` | Events and comments in one feed |
-| GET | `/agents/` | Directory for the assignment picker |
+| GET | `/agents/` | Directory for the assignment picker; returns the whole desk, unpaginated in practice |
 | GET | `/health/` | Liveness + database |
 
 Every write endpoint accepts an optional `If-Match: <version>` header.
@@ -215,7 +234,8 @@ Every failure — validation, permission, domain rule, crash — has one shape:
 
 | Code | HTTP | When |
 |---|---|---|
-| `validation_error` | 400 | Malformed payload |
+| `validation_error` | 400 | Payload rejected; `details.fields` names each one |
+| `malformed_request` | 400 | The body never parsed as JSON, so there are no fields to report |
 | `invalid_transition` | 400 | Illegal status change; `details.allowed` lists the legal ones |
 | `not_authenticated` | 401 | Missing or bad credentials |
 | `permission_denied` | 403 | Role or ownership rule |
@@ -446,7 +466,7 @@ spread across views, so it can be read at a glance and tested exhaustively.
 make test           # or: docker compose run --rm web test --cov
 ```
 
-**147 tests, 100% coverage** of `apps/` and `config/`. `mypy apps config` is clean and runs in CI.
+**151 tests, 100% coverage** of `apps/` and `config/`. `mypy apps config` is clean and runs in CI.
 
 What is actually asserted, in order of value:
 
@@ -468,6 +488,8 @@ What is actually asserted, in order of value:
 12. **Comments and events cannot be rewritten**, at the model level.
 13. **The JWT never carries the internal id** — the token subject is the public UUID.
 14. **The login endpoint is throttled**, and the read-only admin really is read-only.
+15. **`OPTIONS` describes an endpoint** instead of refusing it, and a body that is not
+    JSON gets its own error code rather than borrowing the validation one.
 
 What is not tested: that Django saves to the database.
 
