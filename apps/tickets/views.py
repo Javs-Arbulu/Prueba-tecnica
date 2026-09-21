@@ -44,7 +44,6 @@ from apps.tickets.serializers import (
     TicketUpdateSerializer,
     TimelineEntrySerializer,
 )
-from apps.tickets.throttling import enforce_email_rate_limit
 
 UUID_URL_REGEX = "[0-9a-fA-F-]{36}"
 
@@ -116,7 +115,15 @@ class TicketViewSet(
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, SemanticOrderingFilter]
     filterset_class = TicketFilter
     search_fields = ["subject", "description", "customer__name", "customer__email"]
-    ordering_fields = ["created_at", "updated_at", "status", "priority", "first_assigned_at"]
+    # `updated_at` is deliberately absent: it means "this row was written", not
+    # "something happened here", and a client sorting a queue wants the second.
+    ordering_fields = [
+        "created_at",
+        "last_activity_at",
+        "status",
+        "priority",
+        "first_assigned_at",
+    ]
     ordering = ["-created_at"]
 
     serializer_classes = {
@@ -344,7 +351,6 @@ class TicketViewSet(
                 public_id=ticket.public_id,
                 actor=self.actor,
                 body=serializer.validated_data["body"],
-                is_internal=serializer.validated_data["is_internal"],
                 expected_version=self.expected_version,
             )
             return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
@@ -425,7 +431,6 @@ class PublicTicketCreateView(GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        enforce_email_rate_limit(request, self, email=data["customer"]["email"])
         result = services.create_ticket(
             subject=data["subject"],
             description=data["description"],
@@ -435,6 +440,7 @@ class PublicTicketCreateView(GenericAPIView):
             actor=None,
             idempotency_key=request.headers.get("Idempotency-Key"),
             deduplicate=True,
+            enforce_customer_quota=True,
         )
         response = Response(
             TicketPublicSerializer(result.ticket).data,

@@ -108,11 +108,15 @@ class TicketUpdateSerializer(serializers.Serializer):
 
 
 class CommentCreateSerializer(serializers.Serializer):
+    """Comments are internal, which is all the brief asks for.
+
+    `Comment.is_internal` stays on the model for the day a customer-facing reply
+    exists, but it is not settable here: no endpoint shows a comment to a
+    customer, so accepting `is_internal: false` would let an agent believe they
+    had written to somebody who will never read it.
+    """
+
     body = serializers.CharField(min_length=1, max_length=LONG_TEXT_MAX_LENGTH)
-    is_internal = serializers.BooleanField(
-        default=True,
-        help_text="Internal notes are never exposed by the public endpoints.",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +142,7 @@ class TicketListSerializer(serializers.ModelSerializer):
             "version",
             "created_at",
             "updated_at",
+            "last_activity_at",
         )
         read_only_fields = fields
 

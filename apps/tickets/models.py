@@ -6,6 +6,7 @@ from typing import Any, NoReturn
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.tickets.enums import (
     EventType,
@@ -94,7 +95,12 @@ class Ticket(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    # `updated_at` answers "when was this row last written"; it says nothing
+    # about the conversation, because a comment is a row of its own. This one
+    # answers "when did anything last happen here", which is what an agent
+    # scanning a queue actually wants to sort by.
     updated_at = models.DateTimeField(auto_now=True)
+    last_activity_at = models.DateTimeField(default=timezone.now, db_index=True)
     first_assigned_at = models.DateTimeField(null=True, blank=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)

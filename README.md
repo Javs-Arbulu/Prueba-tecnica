@@ -145,6 +145,7 @@ stateDiagram-v2
     IN_PROGRESS --> OPEN : released
     PENDING_CUSTOMER --> IN_PROGRESS
     PENDING_CUSTOMER --> RESOLVED
+    PENDING_CUSTOMER --> OPEN : released
     RESOLVED --> CLOSED
     RESOLVED --> IN_PROGRESS : reopened
     CLOSED --> [*]
@@ -161,7 +162,9 @@ Invariants:
 - `RESOLVED` stamps `resolved_at`; reopening clears it.
 - `CLOSED` is terminal. A write against it answers **409**, not 400 — the request is
   not malformed, the resource simply no longer accepts writes.
-- Releasing a ticket that was `IN_PROGRESS` returns it to `OPEN`.
+- Releasing a ticket somebody was on the hook for — `IN_PROGRESS` or
+  `PENDING_CUSTOMER` — returns it to `OPEN`. When the customer finally replies,
+  that reply has to land on somebody.
 - An illegal transition answers **400** and names the legal destinations.
 
 ---
@@ -198,7 +201,7 @@ Base path: `/api/v1/`. Every resource is addressed by its public UUID.
 | POST | `/tickets/{uuid}/priority/` | `{priority, note}` |
 | POST | `/tickets/{uuid}/assign/` | `{assignee_id \| null, note}` |
 | POST | `/tickets/{uuid}/assign-to-me/` | Shortcut for the common case |
-| GET · POST | `/tickets/{uuid}/comments/` | Cursor-paginated; internal by default |
+| GET · POST | `/tickets/{uuid}/comments/` | Cursor-paginated. Comments are internal; see the scope note below |
 | GET | `/tickets/{uuid}/timeline/` | Events and comments in one feed |
 | GET | `/agents/` | Directory for the assignment picker; returns the whole desk, unpaginated in practice |
 | GET | `/health/` | Liveness + database |
@@ -215,6 +218,9 @@ GET /api/v1/tickets/?status=OPEN&status=IN_PROGRESS&priority=HIGH
 
 `ordering=-priority` sorts URGENT → LOW and `ordering=status` walks the workflow
 (OPEN → CLOSED), rather than sorting the stored strings alphabetically.
+`ordering=-last_activity_at` is the "what moved recently" sort: comments count as
+activity, which `updated_at` would not have reflected, so `updated_at` is
+deliberately not offered as an ordering field.
 
 ### Error contract
 
@@ -467,7 +473,7 @@ spread across views, so it can be read at a glance and tested exhaustively.
 make test           # or: docker compose run --rm web test --cov
 ```
 
-**151 tests, 100% coverage** of `apps/` and `config/`. `mypy apps config` is clean and runs in CI.
+**187 tests, 100% coverage** of `apps/` and `config/`. `mypy apps config` is clean and runs in CI.
 
 What is actually asserted, in order of value:
 
@@ -536,6 +542,23 @@ What is not tested: that Django saves to the database.
   the committed OpenAPI schema is out of date.
 
 ---
+
+### Two decisions worth stating plainly
+
+**An agent cannot change the status of a colleague's ticket.** The brief says
+agents must be able to change the status of a request; here an `AGENT` may do so
+on tickets they own or that nobody has claimed, and a `SUPERVISOR` may do so on
+anything. That is a deliberate narrowing: reaching into work somebody else is
+doing is how two agents end up contradicting each other on the same incident.
+The cost is real and worth naming — if the assigned agent is off sick and no
+supervisor is on shift, that ticket waits. If the desk wants the looser rule, it
+is one entry in `ACCESS_MATRIX`.
+
+**Comments are internal, and the API does not pretend otherwise.**
+`Comment.is_internal` exists on the model for the day a customer-facing reply is
+added, but it cannot be set through the API: no endpoint shows a comment to a
+customer, so accepting `is_internal: false` would let an agent believe they had
+written to somebody who will never read it.
 
 ## 8. Out of scope
 

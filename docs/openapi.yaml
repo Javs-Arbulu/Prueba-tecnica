@@ -941,15 +941,18 @@ components:
       - public_id
     CommentCreateRequest:
       type: object
+      description: |-
+        Comments are internal, which is all the brief asks for.
+
+        `Comment.is_internal` stays on the model for the day a customer-facing reply
+        exists, but it is not settable here: no endpoint shows a comment to a
+        customer, so accepting `is_internal: false` would let an agent believe they
+        had written to somebody who will never read it.
       properties:
         body:
           type: string
           minLength: 1
           maxLength: 20000
-        is_internal:
-          type: boolean
-          default: true
-          description: Internal notes are never exposed by the public endpoints.
       required:
       - body
     Customer:
@@ -1217,6 +1220,10 @@ components:
           type: string
           format: date-time
           readOnly: true
+        last_activity_at:
+          type: string
+          format: date-time
+          readOnly: true
         description:
           type: string
           readOnly: true
@@ -1257,6 +1264,7 @@ components:
       - customer
       - description
       - first_assigned_at
+      - last_activity_at
       - priority
       - public_id
       - reported_by_name
@@ -1310,11 +1318,16 @@ components:
           type: string
           format: date-time
           readOnly: true
+        last_activity_at:
+          type: string
+          format: date-time
+          readOnly: true
       required:
       - assignee
       - comment_count
       - created_at
       - customer
+      - last_activity_at
       - priority
       - public_id
       - reported_priority

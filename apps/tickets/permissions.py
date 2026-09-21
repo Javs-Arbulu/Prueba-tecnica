@@ -9,7 +9,7 @@ class, matrix as data).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
@@ -179,5 +179,12 @@ class TicketActionPermission(BasePermission):
             return True, str(cast(User, request.user).public_id)
         if view_action != "assign":
             return False, None
-        raw = request.data.get("assignee_id") if hasattr(request, "data") else None
+        # `request.data` is whatever JSON the client sent, and JSON's top level
+        # may be a list or a string. Calling .get() on those raises, and a
+        # permission check is the last place that should decide the request is a
+        # server error: step aside and let the serializer answer with a 400.
+        payload = request.data
+        if not isinstance(payload, Mapping):
+            return False, None
+        raw = payload.get("assignee_id")
         return True, None if raw in (None, "") else str(raw)

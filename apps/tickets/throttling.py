@@ -5,11 +5,13 @@ an address is cheap and a botnet has thousands of them. This adds the dimension
 infrastructure cannot see — the customer a submission claims to come from — so a
 distributed flood still cannot bury one customer's queue.
 
-It is applied from the view, after validation, rather than as a member of
-`throttle_classes`. A throttle runs before the body is parsed, so keying on a
-field inside that body would mean reading it early, and a body that fails to
-parse would then surface as a confusing error instead of a plain one. Validate
-first, then spend the budget: the per-IP limit already guards the cheap path.
+It is applied from the creation service rather than as a member of
+`throttle_classes`, for two reasons. A throttle runs before the body is parsed,
+so keying on a field inside that body would mean reading it early, and a body
+that fails to parse would surface as a confusing error instead of a plain one.
+And the budget is a budget of *tickets*, not of requests: spending it in the
+view would charge a customer for the retries that idempotency exists to make
+free. The per-IP limit already guards the cheap path.
 """
 
 from __future__ import annotations
@@ -36,7 +38,9 @@ class SubmittedEmailRateThrottle(SimpleRateThrottle):
         self.email = Customer.normalise_email(email)
         super().__init__()
 
-    def get_cache_key(self, request: Request, view: APIView) -> str | None:
+    def get_cache_key(
+        self, request: Request | None = None, view: APIView | None = None
+    ) -> str | None:
         if not self.email:
             return None
         # Hashed, not raw: a cache key is a place nobody expects to find an
@@ -45,8 +49,12 @@ class SubmittedEmailRateThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": digest}
 
 
-def enforce_email_rate_limit(request: Request, view: APIView, *, email: str) -> None:
-    """Raise ``Throttled`` when this address has opened too many tickets."""
+def enforce_email_rate_limit(*, email: str) -> None:
+    """Spend one ticket from this address's hourly budget, or refuse.
+
+    Neither the request nor the view is needed: the key is the address, and the
+    caller is the creation service rather than a DRF hook.
+    """
     throttle = SubmittedEmailRateThrottle(email)
-    if not throttle.allow_request(request, view):
+    if not throttle.allow_request(None, None):  # type: ignore[arg-type]
         raise Throttled(throttle.wait())

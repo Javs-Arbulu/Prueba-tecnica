@@ -15,9 +15,11 @@ from rest_framework.throttling import SimpleRateThrottle
 from apps.core.checks import shared_cache_is_configured
 from apps.customers.models import Customer
 from apps.tickets import services
+from apps.tickets.enums import Status
 from apps.tickets.models import Ticket
 from apps.tickets.serializers import LONG_TEXT_MAX_LENGTH
 from tests.conftest import ticket_url
+from tests.factories import make_ticket
 
 pytestmark = pytest.mark.django_db
 
@@ -323,9 +325,106 @@ def test_djangos_own_handlers_speak_the_same_contract():
 
 def test_without_an_email_there_is_nothing_to_count_against():
     """An unnamed submitter cannot be rate limited by name; validation answers."""
-    from rest_framework.test import APIRequestFactory
-
     from apps.tickets.throttling import SubmittedEmailRateThrottle, enforce_email_rate_limit
 
-    assert SubmittedEmailRateThrottle("").get_cache_key(None, None) is None
-    enforce_email_rate_limit(APIRequestFactory().post("/"), None, email="   ")
+    assert SubmittedEmailRateThrottle("").get_cache_key() is None
+    enforce_email_rate_limit(email="   ")
+
+
+# ---------------------------------------------------------------------------
+# What the review found
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("body", ["[]", '"hola"', "3", "null"])
+def test_a_json_body_that_is_not_an_object_is_a_client_error(agent_client, ticket, body):
+    """JSON's top level may be a list or a scalar. Reading `assignee_id` off one
+    used to raise inside the permission check and answer 500."""
+    response = agent_client.post(
+        ticket_url(ticket, "assign/"), data=body, content_type="application/json"
+    )
+
+    assert response.status_code == 400
+    assert response.data["error"]["code"] == "validation_error"
+
+
+def test_retrying_one_submission_does_not_spend_the_customers_budget(api_client, monkeypatch):
+    """Idempotency promises a retry is free. A budget of tickets must not charge
+    for the requests that promise makes harmless."""
+    monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", rates(public_ticket_email="2/hour"))
+    headers = {"HTTP_IDEMPOTENCY_KEY": "one-submission"}
+
+    statuses = [api_client.post(CREATE_URL, payload(), **headers).status_code for _ in range(5)]
+    another = api_client.post(CREATE_URL, payload(subject="A genuinely new report"))
+
+    assert statuses == [201, 200, 200, 200, 200]
+    assert Ticket.objects.count() == 2
+    assert another.status_code == 201  # the second of two, not the sixth of five
+
+
+def test_the_budget_still_counts_tickets_that_are_really_created(api_client, monkeypatch):
+    monkeypatch.setattr(SimpleRateThrottle, "THROTTLE_RATES", rates(public_ticket_email="2/hour"))
+
+    statuses = [
+        api_client.post(CREATE_URL, payload(subject=f"Distinct subject {index}")).status_code
+        for index in range(3)
+    ]
+
+    assert statuses == [201, 201, 429]
+
+
+def test_releasing_a_ticket_waiting_on_the_customer_returns_it_to_the_queue(agent, supervisor):
+    """Same reasoning as ADR-14: when the customer finally replies, that reply
+    has to land on somebody."""
+    ticket = make_ticket(Status.PENDING_CUSTOMER, assignee=agent)
+
+    updated = services.assign(public_id=ticket.public_id, actor=supervisor, assignee=None)
+
+    assert (updated.status, updated.assignee) == (Status.OPEN, None)
+    assert [event.event_type for event in ticket.events.order_by("created_at", "id")] == [
+        "UNASSIGNED",
+        "STATUS_CHANGED",
+    ]
+
+
+def test_comments_cannot_be_marked_as_customer_facing(agent_client, ticket):
+    """No endpoint shows a comment to a customer, so the API must not offer a
+    switch that says it does."""
+    response = agent_client.post(
+        ticket_url(ticket, "comments/"),
+        {"body": "We have refunded you.", "is_internal": False},
+    )
+
+    assert response.status_code == 201
+    assert response.data["is_internal"] is True
+
+
+def test_a_comment_counts_as_activity_without_counting_as_a_change(agent):
+    """The sort an agent reaches for is "what moved recently", and a comment is
+    the most common thing that moves. It must not bump `version`, though: nobody
+    else's open form is invalidated by a note."""
+    ticket = make_ticket(Status.OPEN)
+    before = ticket.last_activity_at
+
+    services.add_comment(public_id=ticket.public_id, actor=agent, body="Looking into it.")
+
+    ticket.refresh_from_db()
+    assert ticket.last_activity_at > before
+    assert ticket.version == 1
+
+
+def test_the_queue_can_be_sorted_by_what_moved_last(agent_client, agent):
+    quiet = make_ticket(Status.OPEN, subject="Nobody has touched this one")
+    busy = make_ticket(Status.OPEN, subject="Three people are talking here")
+    services.add_comment(public_id=busy.public_id, actor=agent, body="A fresh note.")
+
+    response = agent_client.get("/api/v1/tickets/", {"ordering": "-last_activity_at"})
+
+    subjects = [row["subject"] for row in response.data["results"]]
+    assert subjects.index(busy.subject) < subjects.index(quiet.subject)
+
+
+def test_updated_at_is_not_offered_as_an_activity_sort(agent_client):
+    """It means "this row was written", which is a different question."""
+    from apps.tickets.views import TicketViewSet
+
+    assert "updated_at" not in TicketViewSet.ordering_fields
+    assert "last_activity_at" in TicketViewSet.ordering_fields

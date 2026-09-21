@@ -49,13 +49,22 @@ class EventType(models.TextChoices):
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     Status.OPEN: frozenset({Status.IN_PROGRESS, Status.RESOLVED, Status.CLOSED}),
     Status.IN_PROGRESS: frozenset({Status.PENDING_CUSTOMER, Status.RESOLVED, Status.OPEN}),
-    Status.PENDING_CUSTOMER: frozenset({Status.IN_PROGRESS, Status.RESOLVED}),
+    Status.PENDING_CUSTOMER: frozenset({Status.IN_PROGRESS, Status.RESOLVED, Status.OPEN}),
     Status.RESOLVED: frozenset({Status.CLOSED, Status.IN_PROGRESS}),  # the second one is a reopen
     Status.CLOSED: frozenset(),  # terminal, on purpose (ADR-13)
 }
 
 #: Statuses that require somebody to be responsible for the ticket.
 STATUSES_REQUIRING_ASSIGNEE: frozenset[str] = frozenset({Status.IN_PROGRESS})
+
+#: Statuses that mean "an agent is on the hook for this". Releasing a ticket in
+#: one of them sends it back to the queue, because the alternative is a ticket
+#: nobody is working on that no queue shows. `PENDING_CUSTOMER` belongs here for
+#: the same reason `IN_PROGRESS` does: when the customer finally replies, that
+#: reply has to land on somebody.
+STATUSES_RETURNED_TO_QUEUE_ON_RELEASE: frozenset[str] = frozenset(
+    {Status.IN_PROGRESS, Status.PENDING_CUSTOMER}
+)
 
 #: Order used when sorting by "how urgent is this", instead of alphabetically.
 PRIORITY_RANK: dict[str, int] = {

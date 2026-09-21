@@ -31,12 +31,14 @@ from apps.core.exceptions import InvalidTransition, TicketClosed, VersionConflic
 from apps.customers.models import Customer
 from apps.tickets.enums import (
     STATUSES_REQUIRING_ASSIGNEE,
+    STATUSES_RETURNED_TO_QUEUE_ON_RELEASE,
     EventType,
     Status,
     allowed_transitions_from,
     is_transition_allowed,
 )
 from apps.tickets.models import Comment, Ticket, TicketEvent
+from apps.tickets.throttling import enforce_email_rate_limit
 
 _FIELD_SEPARATOR = "\x1f"
 
@@ -67,6 +69,7 @@ def create_ticket(
     priority: str | None = None,
     idempotency_key: str | None = None,
     deduplicate: bool = False,
+    enforce_customer_quota: bool = False,
 ) -> TicketCreation:
     """Create a ticket, or return the one an identical request just created.
 
@@ -85,6 +88,11 @@ def create_ticket(
         duplicate = _find_recent_duplicate(fingerprint, window)
         if duplicate is not None:
             return TicketCreation(ticket=duplicate, created=False)
+
+    if enforce_customer_quota:
+        # After the duplicate check, so a retried submission costs nothing: the
+        # budget counts tickets opened, not requests received.
+        enforce_email_rate_limit(email=customer_email)
 
     with transaction.atomic():
         customer = _resolve_customer(name=customer_name, email=customer_email, actor=actor)
@@ -189,8 +197,9 @@ def assign(
 ) -> Ticket:
     """Assign, reassign or release a ticket.
 
-    Releasing one that was ``IN_PROGRESS`` sends it back to ``OPEN`` (ADR-14):
-    the alternative is a ticket nobody is working on that no queue shows.
+    Releasing one that somebody was on the hook for sends it back to ``OPEN``
+    (ADR-14): the alternative is a ticket nobody is working on that no queue
+    shows, whether it was being worked or waiting on the customer.
     """
     ticket = _lock(public_id)
     _assert_writable(ticket)
@@ -217,7 +226,7 @@ def assign(
         note=note,
     )
 
-    if ticket.status == Status.IN_PROGRESS:
+    if ticket.status in STATUSES_RETURNED_TO_QUEUE_ON_RELEASE:
         previous_status = ticket.status
         ticket.status = Status.OPEN
         changed.append("status")
@@ -336,6 +345,10 @@ def add_comment(
         new_value="internal" if is_internal else "public",
         comment=comment,
     )
+    # Activity, yes; state change, no. The version stays where it was so an open
+    # form elsewhere is not invalidated by a note nobody else was editing.
+    ticket.last_activity_at = comment.created_at
+    ticket.save(update_fields=["last_activity_at"])
     return comment
 
 
@@ -414,7 +427,8 @@ def _apply_status_timestamps(ticket: Ticket, new_status: str) -> list[str]:
 def _save(ticket: Ticket, changed_fields: list[str]) -> None:
     """Persist a mutation and move the optimistic-concurrency token forward."""
     ticket.version += 1
-    fields = dict.fromkeys([*changed_fields, "version", "updated_at"])
+    ticket.last_activity_at = timezone.now()
+    fields = dict.fromkeys([*changed_fields, "version", "updated_at", "last_activity_at"])
     ticket.save(update_fields=list(fields))
 
 
