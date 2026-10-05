@@ -66,8 +66,8 @@ surprise.
 
 For a request-by-request tour, [`docs/requests.http`](docs/requests.http) runs in
 VS Code (REST Client) or JetBrains. Postman users can import
-[`docs/postman_collection.json`](docs/postman_collection.json): 40 requests in 7
-folders that chain their own variables, with 77 assertions, so the Collection
+[`docs/postman_collection.json`](docs/postman_collection.json): 44 requests in 7
+folders that chain their own variables, with 87 assertions, so the Collection
 Runner is the same end-to-end check in a UI (verified green with Newman). Both endpoints the collection leans
 on are rate limited on purpose, so run it at most twice a minute — or
 `docker compose restart web` to reset the counters.
